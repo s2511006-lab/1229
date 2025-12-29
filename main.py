@@ -18,6 +18,13 @@ st.markdown("""
     <style>
     .main_title { font-size: 40px; fontWeight: bold; color: #2E8B57; text-align: center; margin-bottom: 10px; }
     .sub_text { font-size: 18px; color: #555; text-align: center; margin-bottom: 30px; }
+    .bin-card {
+        background-color: #f9f9f9;
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        margin-bottom: 10px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -26,14 +33,12 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 @st.cache_data
 def load_data():
-    # 기본 파일명 (GitHub 파일명)
     file_path = "________________20250218.csv"
     
-    # 1. utf-8 시도
+    # 인코딩 처리
     try:
         df = pd.read_csv(file_path, encoding='utf-8')
     except:
-        # 2. cp949 시도
         try:
             df = pd.read_csv(file_path, encoding='cp949')
         except:
@@ -47,42 +52,36 @@ def load_data():
     df = df[required_cols].dropna(subset=['위도', '경도'])
     return df
 
-# 데이터 불러오기
 df = load_data()
 
 # -----------------------------------------------------------------------------
-# 3. 메인 UI 및 자동 위치 파악
+# 3. 메인 UI
 # -----------------------------------------------------------------------------
 st.markdown('<div class="main_title">♻️ 서초구 의류수거함 에코맵</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub_text">현재 위치를 자동으로 파악하여 가장 가까운 수거함을 안내합니다.</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub_text">현재 위치를 파악하여 가장 가까운 수거함과 <b>실제 거리 모습(로드뷰)</b>을 보여드립니다.</div>', unsafe_allow_html=True)
 
-# 3-1. 위치 정보 가져오기 (핵심 기능)
-# 브라우저에서 위치 권한 요청이 뜨면 '허용'을 눌러야 합니다.
+# 3-1. 위치 정보 가져오기
 loc = get_geolocation()
 
-col1, col2 = st.columns([1, 2])
+col1, col2 = st.columns([1.2, 2]) # 왼쪽 영역을 조금 더 넓힘
 
 with col1:
-    st.markdown("### 📍 내 위치 정보")
+    st.markdown("### 📍 내 위치 & 주변 수거함")
     
-    # 기본 위치 (서초구청) - 위치 권한 거부시 사용
-    user_location = (37.483574, 127.032692)
-    location_status = "기본 위치 (서초구청)"
-
-    # 위치 정보가 들어왔다면 덮어쓰기
+    # 위치 처리 로직
+    user_location = (37.483574, 127.032692) # 기본값 (서초구청)
+    
     if loc:
         user_location = (loc['coords']['latitude'], loc['coords']['longitude'])
-        location_status = "✅ 현재 위치 파악 완료!"
-        st.success(location_status)
+        st.success("✅ 현재 위치를 찾았습니다!")
     else:
-        st.info("📡 위치를 찾는 중입니다... (브라우저 권한 허용 필요)")
-        st.caption("위치를 못 찾으면 서초구청을 기준으로 안내합니다.")
+        st.info("📡 위치 확인 중... (허용해주세요)")
+        st.caption("위치를 못 찾으면 '서초구청' 기준으로 안내합니다.")
 
     # -------------------------------------------------------------------------
-    # 4. 거리 계산 및 결과 출력
+    # 4. 거리 계산 및 로드뷰 링크 생성
     # -------------------------------------------------------------------------
     if df is not None:
-        # 거리 계산 함수
         def calculate_distance(row):
             bin_loc = (row['위도'], row['경도'])
             return geodesic(user_location, bin_loc).meters
@@ -90,12 +89,29 @@ with col1:
         df['거리(m)'] = df.apply(calculate_distance, axis=1)
         nearest_bins = df.sort_values(by='거리(m)').head(5)
 
-        st.markdown("### 🏃 가장 가까운 수거함 TOP 5")
+        st.markdown("---")
+        st.subheader(f"🏃 가장 가까운 수거함 TOP 5")
+        
+        # 리스트 출력
         for idx, row in nearest_bins.iterrows():
-            detail = row['상세위치'] if '상세위치' in row else ""
-            with st.expander(f"📍 {row['설치장소명']} ({int(row['거리(m)'])}m)"):
-                st.write(f"주소: {row['소재지도로명주소']}")
-                st.write(f"상세: {detail}")
+            dist = int(row['거리(m)'])
+            detail = row['상세위치'] if '상세위치' in row else "상세 정보 없음"
+            
+            # 카카오맵 로드뷰 URL 생성
+            roadview_url = f"https://map.kakao.com/link/roadview/{row['위도']},{row['경도']}"
+            
+            with st.container():
+                st.markdown(f"""
+                <div class="bin-card">
+                    <h4>📍 {row['설치장소명']} <span style="color:#2E8B57; font-size:0.8em;">({dist}m)</span></h4>
+                    <p><b>주소:</b> {row['소재지도로명주소']}<br>
+                    <b>위치:</b> {detail}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # 로드뷰 버튼
+                st.link_button(f"📸 {row['설치장소명']} 로드뷰 보기", roadview_url)
+
     else:
         st.error("데이터 파일을 찾을 수 없습니다.")
 
@@ -103,17 +119,16 @@ with col2:
     st.markdown("### 🗺️ 지도 확인")
     
     if df is not None:
-        # 지도 생성
         m = folium.Map(location=user_location, zoom_start=15)
 
-        # 내 위치 마커 (빨간색)
+        # 내 위치
         folium.Marker(
             user_location,
             popup="내 위치",
             icon=folium.Icon(color='red', icon='user')
         ).add_to(m)
 
-        # 수거함 마커 (초록색)
+        # 수거함 마커
         for idx, row in nearest_bins.iterrows():
             folium.Marker(
                 [row['위도'], row['경도']],
@@ -123,7 +138,13 @@ with col2:
             ).add_to(m)
 
         st_folium(m, width="100%", height=600)
+        
+    # 참고 이미지 (데이터에 실제 사진이 없으므로 대표 이미지 표시)
+    st.info("💡 참고: 데이터 파일에 실제 사진은 포함되어 있지 않아, 버튼을 누르면 '카카오맵 로드뷰'로 연결하여 현장 모습을 보여드립니다.")
+    # 대표 이미지 (무료 이미지 예시)
+    st.image("https://cdn.pixabay.com/photo/2020/03/30/15/37/recycling-4984742_1280.jpg", 
+             caption="의류수거함 예시 이미지 (실제와 다를 수 있음)", width=400)
 
 # 푸터
 st.divider()
-st.caption("※ 위치 정보는 브라우저를 통해 실시간으로 파악되며 서버에 저장되지 않습니다.")
+st.caption("※ 로드뷰는 카카오맵 서비스로 연결됩니다.")
